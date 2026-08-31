@@ -1,0 +1,298 @@
+// schema.prisma
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------
+
+enum Role {
+  USER
+  VIP
+  ADMIN
+}
+
+enum MatchType {
+  QUICK
+  PRIVATE
+  TOURNAMENT
+}
+
+enum MatchStatus {
+  WAITING
+  IN_GAME
+  FINISHED
+  CANCELLED
+}
+
+enum Suit {
+  HEARTS
+  DIAMONDS
+  CLUBS
+  SPADES
+}
+
+enum ItemType {
+  CARD_BACK
+  TABLE_SKIN
+  EMOJI_PACK
+  PHRASE_PACK
+}
+
+enum TransactionType {
+  PURCHASE
+  TRANSFER
+  REWARD
+  ENTRY_FEE
+  PRIZE
+  REFERRAL
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  CLOSED
+}
+
+// ------------------------------------------------------
+// USER & AUTHENTICATION MODELS
+// ------------------------------------------------------
+
+model User {
+  id                   String            @id @default(uuid())
+  phoneNumber          String?           @unique
+  username             String            @unique
+  avatarUrl            String            @default("default_avatar.png")
+  bio                  String?           @default("بازیکن حکم")
+  level                Int               @default(1)
+  xp                   Int               @default(0)
+  coins                Int               @default(1000)
+  gems                 Int               @default(10)
+  role                 Role              @default(USER)
+  vipExpiresAt         DateTime?
+  isGuest              Boolean           @default(false)
+  referralCode         String            @unique @default(uuid())
+  referredById         String?
+  referredBy           User?             @relation("UserReferrals", fields: [referredById], references: [id])
+  referrals            User[]            @relation("UserReferrals")
+  deletionRequestedAt  DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  // Relationships
+  stats                UserStat?
+  inventory            InventoryItem[]
+  sentTransactions     Transaction[]     @relation("SentTransactions")
+  receivedTransactions Transaction[]     @relation("ReceivedTransactions")
+  guildId              String?
+  guild                Guild?            @relation(fields: [guildId], references: [id])
+  guildOwner           Guild?            @relation("GuildOwner")
+  matchPlayers         MatchPlayer[]
+  createdRooms         Room[]            @relation("RoomHost")
+  userQuests           UserQuest[]
+  tickets              Ticket[]
+  blockedUsers         BlockedUser[]     @relation("Blocker")
+  blockedByUsers       BlockedUser[]     @relation("Blocked")
+  friendshipsInitiated Friendship[]      @relation("UserFriends")
+  friendshipsReceived  Friendship[]      @relation("UserFriendOf")
+
+  @@map("users")
+}
+
+model UserStat {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  totalGames     Int      @default(0)
+  wins           Int      @default(0)
+  losses         Int      @default(0)
+  totalKots      Int      @default(0)
+  totalHakemWins Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@map("user_stats")
+}
+
+model BlockedUser {
+  id        String   @id @default(uuid())
+  blockerId String
+  blocker   User     @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blockedId String
+  blocked   User     @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([blockerId, blockedId])
+  @@map("blocked_users")
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation("UserFriends", fields: [userId], references: [id], onDelete: Cascade)
+  friendId  String
+  friend    User     @relation("UserFriendOf", fields: [friendId], references: [id], onDelete: Cascade)
+  isAccepted Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, friendId])
+  @@map("friendships")
+}
+
+// ------------------------------------------------------
+// GAME, ROOMS & TOURNAMENTS
+// ------------------------------------------------------
+
+model Room {
+  id           String      @id @default(uuid())
+  code         String      @unique
+  hostId       String
+  host         User        @relation("RoomHost", fields: [hostId], references: [id])
+  entryFee     Int         @default(0)
+  targetPoints Int         @default(7)
+  isPrivate    Boolean     @default(true)
+  password     String?
+  status       MatchStatus @default(WAITING)
+  createdAt    DateTime    @default(now())
+  matches      Match[]
+
+  @@map("rooms")
+}
+
+model Tournament {
+  id           String    @id @default(uuid())
+  title        String
+  description  String
+  entryFee     Int
+  prizePool    Int
+  minLevel     Int       @default(1)
+  startTime    DateTime
+  status       String    @default("UPCOMING")
+  createdAt    DateTime  @default(now())
+  matches      Match[]
+
+  @@map("tournaments")
+}
+
+model Match {
+  id           String       @id @default(uuid())
+  matchType    MatchType
+  roomId       String?
+  room         Room?        @relation(fields: [roomId], references: [id])
+  tournamentId String?
+  tournament   Tournament?  @relation(fields: [tournamentId], references: [id])
+  team1Score   Int          @default(0)
+  team2Score   Int          @default(0)
+  winnerTeam   Int?
+  status       MatchStatus  @default(IN_GAME)
+  startedAt    DateTime     @default(now())
+  endedAt      DateTime?
+  players      MatchPlayer[]
+
+  @@map("matches")
+}
+
+model MatchPlayer {
+  id        String   @id @default(uuid())
+  matchId   String
+  match     Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  team      Int
+  seatIndex Int
+
+  @@unique([matchId, seatIndex])
+  @@map("match_players")
+}
+
+// ------------------------------------------------------
+// GUILD / ALLIANCE SYSTEM
+// ------------------------------------------------------
+
+model Guild {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  logo        String   @default("guild_default.png")
+  level       Int      @default(1)
+  ownerId     String   @unique
+  owner       User     @relation("GuildOwner", fields: [ownerId], references: [id])
+  members     User[]
+  createdAt   DateTime @default(now())
+
+  @@map("guilds")
+}
+
+// ------------------------------------------------------
+// QUESTS, INVENTORY & ECONOMY
+// ------------------------------------------------------
+
+model Quest {
+  id          String      @id @default(uuid())
+  title       String
+  description String
+  rewardCoins Int         @default(0)
+  rewardXp    Int         @default(0)
+  requiredCount Int       @default(1)
+  userQuests  UserQuest[]
+
+  @@map("quests")
+}
+
+model UserQuest {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questId     String
+  quest       Quest    @relation(fields: [questId], references: [id], onDelete: Cascade)
+  progress    Int      @default(0)
+  isCompleted Boolean  @default(false)
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, questId])
+  @@map("user_quests")
+}
+
+model InventoryItem {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  itemType    ItemType
+  itemId      String
+  isEquipped  Boolean  @default(false)
+  purchasedAt DateTime @default(now())
+
+  @@map("inventory_items")
+}
+
+model Transaction {
+  id          String          @id @default(uuid())
+  senderId    String?
+  sender      User?           @relation("SentTransactions", fields: [senderId], references: [id])
+  receiverId  String?
+  receiver    User?           @relation("ReceivedTransactions", fields: [receiverId], references: [id])
+  amount      Int
+  type        TransactionType
+  description String?
+  createdAt   DateTime        @default(now())
+
+  @@map("transactions")
+}
+
+model Ticket {
+  id        String       @id @default(uuid())
+  userId    String
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subject   String
+  message   String
+  status    TicketStatus @default(OPEN)
+  createdAt DateTime     @default(now())
+
+  @@map("tickets")
+}
